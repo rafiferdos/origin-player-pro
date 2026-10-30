@@ -8,8 +8,6 @@ import android.media.MediaMetadata
 import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
@@ -64,7 +62,8 @@ class MainActivity : Activity() {
         private const val LAUNCH_FROM_EXTRA_KEY = "key_launch_from"
         private val REDIRECT_LAUNCH_FROM_VALUES = setOf("vivomusicmix")
 
-        private const val PREVIEW_REFRESH_MS = 1000L
+        /** Preview art is small; anything larger is wasted work on every refresh. */
+        private const val PREVIEW_ART_MAX_PX = 512
     }
 
     private lateinit var nowPlayingIsland: View
@@ -78,14 +77,16 @@ class MainActivity : Activity() {
     private lateinit var ignoredAppsSummary: TextView
     private lateinit var ignoredAppsCount: TextView
 
-    /** Keeps the live preview in step with the listener's 1s poll while we're on screen. */
-    private val previewHandler = Handler(Looper.getMainLooper())
-    private val previewRunnable = object : Runnable {
-        override fun run() {
-            refreshNowPlaying()
-            previewHandler.postDelayed(this, PREVIEW_REFRESH_MS)
-        }
-    }
+    /**
+     * Phase 1 (2026-10-30): the preview no longer runs its own 1 s timer. The
+     * listener calls this whenever the mirrored session actually changes, and
+     * onResume refreshes once. The preview shows title/artist/art only — no
+     * playback position — so a timer adds nothing but wakeups.
+     */
+    private val mirrorChanged: () -> Unit = { refreshNowPlaying() }
+
+    /** Key of the art currently shown, so an unchanged cover is not re-set. */
+    private var lastPreviewArtKey: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -139,14 +140,16 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        MediaProbeListener.onMirrorChanged = mirrorChanged
         RebindHelper.forceRebindIfNeeded(applicationContext)
         refreshStatus()
-        previewHandler.postDelayed(previewRunnable, PREVIEW_REFRESH_MS)
     }
 
     override fun onPause() {
         super.onPause()
-        previewHandler.removeCallbacks(previewRunnable)
+        if (MediaProbeListener.onMirrorChanged === mirrorChanged) {
+            MediaProbeListener.onMirrorChanged = null
+        }
     }
 
     /** Only redirect straight to the real playing app when a known vivo system surface launched
@@ -199,7 +202,7 @@ class MainActivity : Activity() {
             nowPlayingApp.visibility = View.GONE
             nowPlayingBars.visibility = View.GONE
             nowPlayingHint.visibility = View.GONE
-            showArt(null)
+            showArt(null, null)
             nowPlayingIsland.setOnClickListener(null)
             nowPlayingIsland.isClickable = false
             nowPlayingIsland.contentDescription = getString(R.string.now_playing_none)
@@ -218,20 +221,35 @@ class MainActivity : Activity() {
         nowPlayingBars.visibility = if (playing) View.VISIBLE else View.INVISIBLE
         nowPlayingHint.visibility = View.VISIBLE
         nowPlayingHint.text = getString(R.string.now_playing_hint)
-        showArt(
-            md?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
-                ?: md?.getBitmap(MediaMetadata.METADATA_KEY_ART),
-        )
+        val art = md?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+            ?: md?.getBitmap(MediaMetadata.METADATA_KEY_ART)
+        showArt(art, "$title|$artist|$appLabel|${art?.let { System.identityHashCode(it) }}")
         nowPlayingIsland.contentDescription = getString(R.string.now_playing_description, title, appLabel)
         nowPlayingIsland.setOnClickListener {
             packageManager.getLaunchIntentForPackage(controller.packageName)?.let(::startActivity)
         }
     }
 
-    private fun showArt(art: Bitmap?) {
+    private fun showArt(art: Bitmap?, artKey: String?) {
+        // Unchanged art is not re-set, and a large cover is downscaled once for
+        // this small preview. The mirrored session's own art (for OriginPlayer)
+        // is deliberately not downscaled here.
+        if (artKey == lastPreviewArtKey) return
+        lastPreviewArtKey = artKey
         if (art != null) {
+            val scaled = if (art.width > PREVIEW_ART_MAX_PX || art.height > PREVIEW_ART_MAX_PX) {
+                val scale = PREVIEW_ART_MAX_PX.toFloat() / maxOf(art.width, art.height)
+                Bitmap.createScaledBitmap(
+                    art,
+                    (art.width * scale).toInt().coerceAtLeast(1),
+                    (art.height * scale).toInt().coerceAtLeast(1),
+                    true,
+                )
+            } else {
+                art
+            }
             nowPlayingArt.setPadding(0, 0, 0, 0)
-            nowPlayingArt.setImageBitmap(art)
+            nowPlayingArt.setImageBitmap(scaled)
         } else {
             val pad = (12 * resources.displayMetrics.density).toInt()
             nowPlayingArt.setPadding(pad, pad, pad, pad)

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Origin Ghost Player</string>
-    <string name="channel_name">Origin Ghost Player</string>
+    <string name="app_name">Origin Player Pro</string>
+    <string name="channel_name">Origin Player Pro</string>
     <string name="channel_desc">Relays the currently playing external media session</string>
     <string name="main_subtitle">Mirrors playing media to OriginPlayer</string>
 
@@ -27,6 +27,7 @@
     <string name="back">Back</string>
     <string name="ignored_apps_explanation">Turned-on apps never reach OriginPlayer.</string>
     <string name="search_apps">Search apps</string>
+    <string name="clear_history">Clear history</string>
     <string name="section_recent">Played media recently</string>
     <string name="section_other">Other installed apps</string>
     <string name="playing_now">Playing now</string>

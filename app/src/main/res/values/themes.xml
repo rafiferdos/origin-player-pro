@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.OriginGhostPlayer" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.OriginPlayerPro" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/page_background</item>
         <item name="android:colorAccent">@color/accent</item>
         <item name="android:statusBarColor">@android:color/transparent</item>

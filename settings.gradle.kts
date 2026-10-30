@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "OriginGhostPlayer"
+rootProject.name = "OriginPlayerPro"
 include(":app")

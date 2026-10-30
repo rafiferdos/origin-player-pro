@@ -12,8 +12,8 @@
 #   - Android SDK build-tools on PATH (for apksigner), or ANDROID_HOME/ANDROID_SDK_ROOT set
 #
 # Output (in ./dist/), one pair per flavor:
-#   - origin-ghost-player-joox-<version>.apk  / .apk.sha256
-#   - origin-ghost-player-luna-<version>.apk  / .apk.sha256
+#   - origin-player-pro-joox-<version>.apk  / .apk.sha256
+#   - origin-player-pro-luna-<version>.apk  / .apk.sha256
 #   - a printed signing-certificate SHA-256 fingerprint per APK — should match origin-isle's and
 #     each other, since both variants and origin-isle are signed with the same key.
 #
@@ -71,13 +71,13 @@ for FLAVOR in joox luna; do
     echo "         succeeded with keystore.properties present." >&2
   fi
 
-  APK_OUT="dist/origin-ghost-player-${FLAVOR}-${VERSION}.apk"
+  APK_OUT="dist/origin-player-pro-${FLAVOR}-${VERSION}.apk"
   cp -f "$APK_IN" "$APK_OUT"
 
   if command -v shasum >/dev/null 2>&1; then
-    ( cd dist && shasum -a 256 "origin-ghost-player-${FLAVOR}-${VERSION}.apk" | tee "origin-ghost-player-${FLAVOR}-${VERSION}.apk.sha256" )
+    ( cd dist && shasum -a 256 "origin-player-pro-${FLAVOR}-${VERSION}.apk" | tee "origin-player-pro-${FLAVOR}-${VERSION}.apk.sha256" )
   elif command -v sha256sum >/dev/null 2>&1; then
-    ( cd dist && sha256sum "origin-ghost-player-${FLAVOR}-${VERSION}.apk" | tee "origin-ghost-player-${FLAVOR}-${VERSION}.apk.sha256" )
+    ( cd dist && sha256sum "origin-player-pro-${FLAVOR}-${VERSION}.apk" | tee "origin-player-pro-${FLAVOR}-${VERSION}.apk.sha256" )
   else
     echo "WARNING: no shasum/sha256sum available; skipping checksum file." >&2
   fi
@@ -85,8 +85,8 @@ for FLAVOR in joox luna; do
 done
 
 echo "==> Done."
-echo "    dist/origin-ghost-player-joox-${VERSION}.apk  (+ .sha256)"
-echo "    dist/origin-ghost-player-luna-${VERSION}.apk  (+ .sha256)"
+echo "    dist/origin-player-pro-joox-${VERSION}.apk  (+ .sha256)"
+echo "    dist/origin-player-pro-luna-${VERSION}.apk  (+ .sha256)"
 echo
 echo "    Upload all four files to the same GitHub Release. The certificate fingerprints printed"
 echo "    above should match origin-isle's and each other, since everything is signed with the"

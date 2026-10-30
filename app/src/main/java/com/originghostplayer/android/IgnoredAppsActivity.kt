@@ -51,6 +51,13 @@ class IgnoredAppsActivity : Activity() {
             insets
         }
         findViewById<View>(R.id.back_button).setOnClickListener { finish() }
+        findViewById<View>(R.id.clear_history_button).setOnClickListener {
+            MediaHistory.clear(this)
+            recent = emptyList()
+            loaded = true
+            rebuild()
+            loadApps()
+        }
         listView = findViewById(R.id.app_list)
         emptyText = findViewById(R.id.empty_text)
         listView.adapter = adapter
@@ -100,6 +107,14 @@ class IgnoredAppsActivity : Activity() {
                 .filter { it != self && it !in recentPkgs }
                 .mapNotNull(::entry)
                 .sortedWith(compareBy<AppEntry> { it.pkg !in ignoredAtOpen }.thenBy { it.label.lowercase() })
+
+            // Phase 1 (2026-10-30): history entries for apps that no longer
+            // exist used to stay in prefs forever. Drop them now that we know
+            // getApplicationInfo failed for them — but never drop an ignored
+            // app's entry on this basis, since ignored apps may have no
+            // launcher row and must stay un-ignorable.
+            val knownPkgs = recentPkgs + otherList.map { it.pkg } + ignoredAtOpen
+            MediaHistory.remove(appContext, history.keys.filter { it != self && it !in knownPkgs }.toSet())
 
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread

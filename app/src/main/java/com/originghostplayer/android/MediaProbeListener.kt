@@ -18,6 +18,7 @@ import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -47,7 +48,24 @@ class MediaProbeListener : NotificationListenerService() {
         @Volatile
         var instance: MediaProbeListener? = null
 
-        private const val POLL_INTERVAL_MS = 1000L
+        /**
+         * Called on the main thread after [syncSession] / [clearSession] change what is
+         * mirrored, so MainActivity's preview can refresh without its own 1 s timer.
+         * Phase 1 (2026-10-30): event-driven preview, not polling.
+         */
+        @Volatile
+        var onMirrorChanged: (() -> Unit)? = null
+
+        /**
+         * Phase 1 (2026-10-30): adaptive polling. Callbacks (session-changed,
+         * controller callbacks, notification posted/removed) are the engine; the poll
+         * is only a safety net for missed callbacks. Playing still gets a heartbeat,
+         * paused gets a slow one, and with no tracked session the poll stops
+         * entirely instead of waking the process every second forever.
+         */
+        private const val POLL_INITIAL_MS = 1000L
+        private const val POLL_PLAYING_MS = 5000L
+        private const val POLL_PAUSED_MS = 30000L
 
         /** How long a source with no real PlaybackState (Firefox observed) can sit unchanged
          *  before we give up mirroring it as "playing" and clear it instead. See [syncSession]. */
@@ -68,6 +86,35 @@ class MediaProbeListener : NotificationListenerService() {
     private var controllerCallback: MediaController.Callback? = null
     private val pollHandler = Handler(Looper.getMainLooper())
 
+    /** True while a [pollRunnable] tick is scheduled. Guards against double-posting. */
+    private var pollScheduled = false
+
+    /** Key of the metadata last pushed to our mirrored session, or null. Skipping
+     *  an unchanged setMetadata saves binder work on state-only syncs. */
+    private var lastMetadataKey: String? = null
+
+    private fun schedulePoll(delayMs: Long) {
+        if (pollScheduled) return
+        pollScheduled = true
+        pollHandler.postDelayed(pollRunnable, delayMs)
+    }
+
+    /** Restart the safety-net poll if it stopped and something is now tracked. */
+    private fun ensurePolling() {
+        val controller = trackedController ?: return
+        if (pollScheduled) return
+        val delay = if (controller.playbackState?.state == PlaybackState.STATE_PLAYING) {
+            POLL_PLAYING_MS
+        } else {
+            POLL_PAUSED_MS
+        }
+        schedulePoll(delay)
+    }
+
+    private fun notifyMirrorChanged() {
+        pollHandler.post { onMirrorChanged?.invoke() }
+    }
+
     /** Registered in [onListenerConnected], torn down in [onListenerDisconnected] — see
      *  [isInCarMode]. */
     private var carModeReceiver: BroadcastReceiver? = null
@@ -85,25 +132,50 @@ class MediaProbeListener : NotificationListenerService() {
      *  [MIN_BLIP_BURST_INTERVAL_MS]. */
     private var lastBlipBurstAt = 0L
 
+    /** Delayed second blip of the current burst, if any. Cancelled in [clearSession]
+     *  so a dead session cannot be re-announced 1,200 ms after it was cleared. */
+    private var pendingSecondBlip: Runnable? = null
+
     /** Exposed for [MediaButtonReceiver], which has no other way to reach the tracked controller. */
     fun currentController(): MediaController? = trackedController
 
     /** Re-evaluate right now — called when the user (un)ignores an app, so the change applies
      *  immediately instead of on the next poll tick. Safe to call from any thread. */
     fun retrack() {
-        pollHandler.post { maybeTrack(pickController(activeSessions())) }
+        pollHandler.post {
+            maybeTrack(pickController(activeSessions()))
+            ensurePolling()
+        }
     }
 
     private val pollRunnable = object : Runnable {
         override fun run() {
+            pollScheduled = false
             maybeTrack(pickController(activeSessions()))
-            pollHandler.postDelayed(this, POLL_INTERVAL_MS)
+            val controller = trackedController
+            if (controller == null) return
+            // Screen off + not playing: stop polling. A resume fires the
+            // controller callback, which restarts the poll via syncSession.
+            val interactive = (getSystemService(Context.POWER_SERVICE) as? PowerManager)
+                ?.isInteractive != false
+            if (!interactive &&
+                controller.playbackState?.state != PlaybackState.STATE_PLAYING
+            ) {
+                return
+            }
+            val next = if (controller.playbackState?.state == PlaybackState.STATE_PLAYING) {
+                POLL_PLAYING_MS
+            } else {
+                POLL_PAUSED_MS
+            }
+            schedulePoll(next)
         }
     }
 
     private val sessionsChangedListener =
         MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
             maybeTrack(pickController(mirrorable(controllers)))
+            ensurePolling()
         }
 
     /** Drops our own session and any app the user chose to ignore (see [IgnoredApps]) — neither
@@ -189,7 +261,10 @@ class MediaProbeListener : NotificationListenerService() {
                     // Entering car mode: drop our mirrored session immediately rather than
                     // waiting for the next poll tick, so the head unit never briefly sees both.
                     UiModeManager.ACTION_ENTER_CAR_MODE -> clearSession()
-                    UiModeManager.ACTION_EXIT_CAR_MODE -> maybeTrack(pickController(activeSessions()))
+                    UiModeManager.ACTION_EXIT_CAR_MODE -> {
+                        maybeTrack(pickController(activeSessions()))
+                        ensurePolling()
+                    }
                 }
             }
         }.also {
@@ -203,13 +278,14 @@ class MediaProbeListener : NotificationListenerService() {
             )
         }
         maybeTrack(pickController(activeSessions()))
-        pollHandler.postDelayed(pollRunnable, POLL_INTERVAL_MS)
+        schedulePoll(POLL_INITIAL_MS)
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         if (instance === this) instance = null
         pollHandler.removeCallbacks(pollRunnable)
+        pollScheduled = false
         runCatching {
             getSystemService(MediaSessionManager::class.java)
                 ?.removeOnActiveSessionsChangedListener(sessionsChangedListener)
@@ -239,6 +315,7 @@ class MediaProbeListener : NotificationListenerService() {
         // on — an extra flicker step. Only take over here if it's actually playing.
         if (controller.playbackState?.state == PlaybackState.STATE_PLAYING) {
             trackController(controller)
+            ensurePolling()
         }
     }
 
@@ -378,7 +455,21 @@ class MediaProbeListener : NotificationListenerService() {
             unknownStateSince = 0L
         }
 
-        session.setMetadata(controller.metadata)
+        // Phase 1: only push metadata when it actually changed. State-only syncs
+        // (e.g. play -> pause) used to re-push the same large album art every time.
+        // The art object identity is part of the key so a changed cover still flows.
+        val metadata = controller.metadata
+        val metadataKey = listOf(
+            metadata?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE),
+            metadata?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST),
+            metadata?.getString(android.media.MediaMetadata.METADATA_KEY_ALBUM),
+            metadata?.getBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART)
+                ?.let { System.identityHashCode(it).toString() },
+        ).joinToString("|")
+        if (metadataKey != lastMetadataKey) {
+            session.setMetadata(metadata)
+            lastMetadataKey = metadataKey
+        }
         val state = controller.playbackState ?: PlaybackState.Builder()
             .setState(PlaybackState.STATE_PLAYING, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1f)
             .setActions(
@@ -408,9 +499,16 @@ class MediaProbeListener : NotificationListenerService() {
         if (isPlayingNow && !lastKnownPlaying && now - lastBlipBurstAt >= MIN_BLIP_BURST_INTERVAL_MS) {
             lastBlipBurstAt = now
             playSilentBlip(controller, durationMs = 800)
-            pollHandler.postDelayed({ playSilentBlip(controller, durationMs = 800) }, 1200L)
+            pendingSecondBlip?.let { pollHandler.removeCallbacks(it) }
+            val secondBlip = Runnable { playSilentBlip(controller, durationMs = 800) }
+            pendingSecondBlip = secondBlip
+            pollHandler.postDelayed(secondBlip, 1200L)
         }
         lastKnownPlaying = isPlayingNow
+        // A resume that arrived via callback (not via the poll) must restart the
+        // safety-net poll if it had stopped while the session was paused/idle.
+        if (isPlayingNow) ensurePolling()
+        notifyMirrorChanged()
     }
 
     private fun clearSession() {
@@ -418,6 +516,10 @@ class MediaProbeListener : NotificationListenerService() {
         trackedController = null
         controllerCallback = null
         lastKnownPlaying = false
+        lastBlipBurstAt = 0L
+        pendingSecondBlip?.let { pollHandler.removeCallbacks(it) }
+        pendingSecondBlip = null
+        lastMetadataKey = null
         unknownStateMetadataKey = null
         unknownStateSince = 0L
         // isActive=false alone left OriginPlayer's chip stuck animating "playing" indefinitely —
@@ -431,5 +533,6 @@ class MediaProbeListener : NotificationListenerService() {
         )
         mediaSession?.setMetadata(null)
         mediaSession?.isActive = false
+        notifyMirrorChanged()
     }
 }

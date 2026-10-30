@@ -1,4 +1,4 @@
-# Origin Ghost Player
+# Origin Player Pro
 <div align="center">
 
 [![Release](https://img.shields.io/github/v/release/fvhde/origin-ghost-player)](https://github.com/fvhde/origin-ghost-player/releases)
@@ -37,8 +37,8 @@ Get it from **[Releases](https://github.com/fvhde/origin-ghost-player/releases)*
 <summary><b>Verify your download</b></summary>
 
 ```sh
-shasum -a 256 origin-ghost-player-<variant>-<version>.apk   # must match the .sha256 file
-apksigner verify --print-certs origin-ghost-player-<variant>-<version>.apk
+shasum -a 256 origin-player-pro-<variant>-<version>.apk   # must match the .sha256 file
+apksigner verify --print-certs origin-player-pro-<variant>-<version>.apk
 ```
 Expected certificate:
 ```

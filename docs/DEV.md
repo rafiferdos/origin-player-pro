@@ -1,8 +1,16 @@
 # Developer guide
 
-This doc covers building Origin Ghost Player from source, the package-name spoof it relies on, how
+This doc covers building Origin Player Pro from source, the package-name spoof it relies on, how
 the identity bridge actually works, and how to cut a signed release. For what the app does and how
 to install it, see the [README](../README.md).
+
+> Rename note (2026-10-30): the project was renamed from Origin Ghost Player to
+> Origin Player Pro for its display name, project name, theme, docs, and release
+> artifact names only. The spoofed `applicationId` values and the Kotlin package /
+> `namespace` (`com.originghostplayer.android`) were intentionally left unchanged,
+> because the former is load-bearing for OriginPlayer (see below) and the latter
+> changes the notification-listener component name, which would force users to
+> re-grant notification access.
 
 ## ⚠️ Read this first: the package name is load-bearing
 
@@ -107,10 +115,10 @@ prove came from the maintainer. To check a downloaded APK:
 
 ```
 # 1. checksum matches the one published on the release
-shasum -a 256 origin-ghost-player-<version>.apk
+shasum -a 256 origin-player-pro-<version>.apk
 
 # 2. it was signed by the maintainer's key — compare against the fingerprint below
-apksigner verify --print-certs origin-ghost-player-<version>.apk
+apksigner verify --print-certs origin-player-pro-<version>.apk
 ```
 
 Official signing certificate SHA-256 (same as origin-isle):
